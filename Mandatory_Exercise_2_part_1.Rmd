@@ -1,0 +1,181 @@
+---
+title: "oblig_2"
+author: "Ida Johanne Austad"
+date: "13 4 2020"
+output: pdf_document
+---
+
+## Setup and installing/importing packages
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+install.packages("glmnet", repos = "https://cran.us.r-project.org")
+library(pls)
+library(glmnet)
+library(coefplot)
+```
+
+## Problem 1
+
+Import data
+
+```{r}
+df <- read.csv("http://web.stanford.edu/~hastie/CASI_files/DATA/leukemia_big.csv",
+               header = T,
+               sep = ",")
+
+num_patients = 72
+num_gene_expressions = 7128
+
+AML_patients = grepl("AML", names(df))
+ALL_patients = grepl("ALL", names(df))
+
+
+```
+
+## a)
+
+```{r}
+#perform principal component analysis of df, with 2 principal components.
+PC_analysis = prcomp(t(df), center = T, scale = T, rank. = 2)
+summary(PC_analysis)
+
+#plot the two principal components in different colors.
+plot(PC_analysis$x, col=c("blue", "red"), main="Principal Component Analysis - Leukaemia", xlab="PC1", ylab = "PC2", pch=1)
+X = PC_analysis$x
+points(X[ALL_patients,1], X[ALL_patients, 2], col = "4", pch = 19)
+points(X[AML_patients,1], X[AML_patients, 2], col = "2", pch = 19)
+legend("topright", legend = c("ALL", "AML"), col = c(4, 2), pch = c(19, 19))
+
+```
+
+## b) 
+
+```{r}
+
+response_df <- read.csv("https://www.uio.no/studier/emner/matnat/math/STK2100/v20/eksamen/response_train.csv",
+               header = T,
+               sep = ",")
+
+#transpose and rename columns
+t_df=t(df)
+colnames(t_df) <- paste0("gene", 1:ncol(t_df))
+
+set.seed(222)
+
+# Lasso regularization with cross validation: 3 folds
+lambda_cv_3 = cv.glmnet(x =t_df, y = response_df[,2], alfa = 1, standardize = T, nfolds = 3)
+lambda_cv_3
+
+# Lasso regularization with cross validation: 10 folds
+lambda_cv_10 = cv.glmnet(x =t_df, y = response_df[,2], alfa = 1, standardize = T, nfolds = 10)
+lambda_cv_10
+
+# Lasso regularization with cross validation: 72 folds (number of patients)
+lambda_loocv = cv.glmnet(x =t_df, y = response_df[,2], alfa = 1, standardize = T, nfolds = 72)
+lambda_loocv
+
+```
+## c)
+
+```{r}
+
+# fit lasso models with the optimal (i.e. minimal) lambda value obtained in the various k-fold cvs
+lasso_model_3 = glmnet(x = t_df, y = response_df[,2], alfa = 1, standardize = T, nfolds = 3, lambda = lambda_cv_3$lambda.min)
+
+lasso_model_10 = glmnet(x = t_df, y = response_df[,2], alfa = 1, standardize = T, nfolds = 10, lambda = lambda_cv_10$lambda.min)
+
+lasso_model_loocv = glmnet(x = t_df, y = response_df[,2], alfa = 1, standardize = T, nfolds = 72, lambda = lambda_loocv$lambda.min)
+
+# get the features which are not set to zero in the various models (using the best version given by the 
+# CV-models directly for nice output)
+extract.coef(lambda_cv_3)
+extract.coef(lambda_cv_10)
+extract.coef(lambda_loocv)
+
+```
+## d)
+
+```{r}
+
+N = 11
+
+# set alfa to 0 for Ridge, and use 10-fold cross validation to find optimal penalty term 
+ridge_cv_10 = cv.glmnet(x=t_df, y = response_df[,2], alfa = 0, standardize = T, nfolds = 10, lambda = )
+ridge_cv_10
+
+#fit model using optimal penalty term
+ridge_model_10  = glmnet(x = t_df, y = response_df[,2], alfa = 0, standardize = T, nfolds = 10, lambda = ridge_cv_10$lambda.min)
+
+#get 11 first coefficients (excluding intercept)
+ridge_coefs = extract.coef(ridge_cv_10) 
+head(ridge_coefs,N+1)
+```
+## e)
+
+```{r}
+
+# perform PCA using CV for selecting number of principal components
+PCA_model_CV = pcr(response_df[,2]~., data = data.frame(t_df), scale = T, validation = "CV")
+
+# plot to select number of components
+validationplot(PCA_model_CV, val.type="MSEP")
+
+# select 4 components 
+model_PCA_4 = pcr(response_df[,2]~t_df, scale = T, ncomp = 4)
+validationplot(model_PCA_4, val.type="MSEP" )
+
+summary(model_PCA_4)
+
+```
+
+## f)
+
+```{r}
+# import test data
+test_df <- read.csv("https://www.uio.no/studier/emner/matnat/math/STK2100/v20/eksamen/test_set.csv",
+               header = T,
+               sep = ",")
+
+# calculate test error results
+test_error <- list()
+test_error$lasso_3 <- mean((test_df$y - predict(lasso_model_3, newx = as.matrix(test_df[,0:-1])))^2)
+test_error$lasso_10 <- mean((test_df$y - predict(lasso_model_10, newx = as.matrix(test_df[,0:-1])))^2)
+test_error$lasso_loocv <- mean((test_df$y - predict(lasso_model_loocv, newx = as.matrix(test_df[,0:-1])))^2)
+test_error$ridge_10 <- mean((test_df$y - predict(ridge_model_10, newx = as.matrix(test_df[,0:-1])))^2)
+test_error$PCA_4 <- mean((test_df$y - predict(PCA_model_CV, newdata = as.matrix(test_df[,0:-1]), ncomp=4))^2)
+
+cbind(test_error)
+
+```
+
+
+## g)
+
+```{r}
+# fit lasso models with the "optional"" lambda value (within 1 se of the error) 
+lasso_model_3_1se = glmnet(x = t_df, y = response_df[,2], alfa = 1, standardize = T, nfolds = 3, lambda = lambda_cv_3$lambda.1se)
+
+lasso_model_10_1se = glmnet(x = t_df, y = response_df[,2], alfa = 1, standardize = T, nfolds = 10, lambda = lambda_cv_10$lambda.1se)
+
+lasso_model_loocv_1se = glmnet(x = t_df, y = response_df[,2], alfa = 1, standardize = T, nfolds = 72, lambda = lambda_loocv$lambda.1se)
+
+#fit rigde regression model using optional lambda
+ridge_model_10_1se = glmnet(x = t_df, y = response_df[,2], alfa = 0, standardize = T, nfolds = 10, lambda = ridge_model_10$lambda.1se)
+
+# calculate test error with optional penalty term
+test_error_1se <- list()
+test_error_1se$lasso_3 <- mean((test_df$y - predict(lasso_model_3_1se, newx = as.matrix(test_df[,0:-1])))^2)
+test_error_1se$lasso_10 <- mean((test_df$y - predict(lasso_model_10_1se, newx = as.matrix(test_df[,0:-1])))^2)
+test_error_1se$lasso_loocv <- mean((test_df$y - predict(lasso_model_loocv_1se, newx = as.matrix(test_df[,0:-1])))^2) 
+test_error_1se$ridge_10 <- mean((test_df$y - predict(ridge_model_10_1se, newx = as.matrix(test_df[,0:-1])))^2)
+
+cbind(test_error_1se)
+
+
+```
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+
+
